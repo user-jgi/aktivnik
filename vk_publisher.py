@@ -39,25 +39,32 @@ def _api(method: str, **params) -> dict:
 
 
 def selfcheck() -> str:
-    """Проверяет ключ сообщества при старте: валиден ли и есть ли право «Стена».
-
-    Ничего не публикует — только читает права токена.
-    """
+    """Реальная проверка постинга при старте: публикует тестовую запись и сразу
+    удаляет её. Единственный надёжный способ убедиться, что ключ из окружения
+    умеет писать на стену. Следов в сообществе не остаётся."""
     if not enabled():
         return "VK-постинг выключен (нет VK_POST_TOKEN)"
+    owner = -int(VK_GROUP_ID)
     try:
-        perms = _api("groups.getTokenPermissions")
-        names = [s.get("name") for s in perms.get("settings", [])]
-        group = _api("groups.getById", group_id=VK_GROUP_ID)
-        # v5.199 возвращает {'groups': [...]}
-        items = group.get("groups", group) if isinstance(group, dict) else group
-        title = items[0].get("name", "?") if items else "?"
-        if "wall" in names:
-            return f"VK-постинг готов: «{title}», права: {', '.join(names)}"
-        return (f"VK-постинг НЕ будет работать: у ключа нет права «Стена». "
-                f"Есть: {', '.join(names) or 'нет прав'}")
-    except (VKPostError, requests.RequestException, KeyError, IndexError) as e:
-        return f"VK-постинг: ключ не прошёл проверку — {e}"
+        res = _api(
+            "wall.post",
+            owner_id=owner,
+            from_group=1,
+            message="🔧 Проверка автопостинга (сообщение удалится автоматически)",
+        )
+        post_id = res.get("post_id")
+        if not post_id:
+            return f"VK-постинг: неожиданный ответ wall.post: {res}"
+        try:
+            _api("wall.delete", owner_id=owner, post_id=post_id)
+            return "VK-постинг РАБОТАЕТ: тестовая запись опубликована и удалена ✅"
+        except (VKPostError, requests.RequestException) as e:
+            return (f"VK-постинг работает, но тест не удалился (post {post_id}): {e} "
+                    f"— удали вручную")
+    except VKPostError as e:
+        return f"VK-постинг НЕ работает: {e}"
+    except requests.RequestException as e:
+        return f"VK-постинг: сетевая ошибка при проверке — {e}"
 
 
 def _download(url: str) -> bytes | None:
