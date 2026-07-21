@@ -39,32 +39,21 @@ def _api(method: str, **params) -> dict:
 
 
 def selfcheck() -> str:
-    """Реальная проверка постинга при старте: публикует тестовую запись и сразу
-    удаляет её. Единственный надёжный способ убедиться, что ключ из окружения
-    умеет писать на стену. Следов в сообществе не остаётся."""
+    """Короткий статус VK-постинга при старте. НИЧЕГО не публикует.
+
+    Проверено вживую: wall.post с ключом сообщества работает. Тестовый постинг
+    при старте убран намеренно — wall.delete недоступен для group-токена
+    (ошибка 27), поэтому тестовые записи пришлось бы удалять руками.
+    """
     if not enabled():
         return "VK-постинг выключен (нет VK_POST_TOKEN)"
-    owner = -int(VK_GROUP_ID)
     try:
-        res = _api(
-            "wall.post",
-            owner_id=owner,
-            from_group=1,
-            message="🔧 Проверка автопостинга (сообщение удалится автоматически)",
-        )
-        post_id = res.get("post_id")
-        if not post_id:
-            return f"VK-постинг: неожиданный ответ wall.post: {res}"
-        try:
-            _api("wall.delete", owner_id=owner, post_id=post_id)
-            return "VK-постинг РАБОТАЕТ: тестовая запись опубликована и удалена ✅"
-        except (VKPostError, requests.RequestException) as e:
-            return (f"VK-постинг работает, но тест не удалился (post {post_id}): {e} "
-                    f"— удали вручную")
-    except VKPostError as e:
-        return f"VK-постинг НЕ работает: {e}"
-    except requests.RequestException as e:
-        return f"VK-постинг: сетевая ошибка при проверке — {e}"
+        group = _api("groups.getById", group_id=VK_GROUP_ID)
+        items = group.get("groups", group) if isinstance(group, dict) else group
+        title = items[0].get("name", "?") if items else "?"
+        return f"VK-постинг включён → «{title}» (vk.com/aktivnik_nn)"
+    except (VKPostError, requests.RequestException, KeyError, IndexError) as e:
+        return f"VK-постинг включён, но сообщество не опрошено: {e}"
 
 
 def _download(url: str) -> bytes | None:
