@@ -1,0 +1,16 @@
+[
+  {"type": "telegram", "id": "hse_nnov", "title": "НИУ ВШЭ — Нижний Новгород"},
+  {"type": "telegram", "id": "lobachevsky_university", "title": "Университет Лобачевского (ННГУ)"},
+  {"type": "telegram", "id": "nntualekseeva", "title": "НГТУ им. Р. Е. Алексеева"},
+  {"type": "telegram", "id": "pos_nngu", "title": "Профком студентов ННГУ"},
+  {"type": "telegram", "id": "ss_unn", "title": "Студсовет ННГУ"},
+  {"type": "telegram", "id": "studsovet_imomi", "title": "Студсовет ИМОМИ ННГУ"},
+  {"type": "telegram", "id": "profkomngtu", "title": "Профсоюзная организация студентов НГТУ"},
+  {"type": "telegram", "id": "rsm_ngtu", "title": "Российский Союз Молодёжи НГТУ"},
+  {"type": "telegram", "id": "medianntu", "title": "POLITELE MEDIA (НГТУ)"},
+  {"type": "telegram", "id": "studsovet_irit", "title": "Студсовет ИРИТ НГТУ"},
+  {"type": "telegram", "id": "stud_sovet_lunn", "title": "Студсовет НГЛУ"},
+  {"type": "telegram", "id": "lunn_family", "title": "LUNN FAMILY (НГЛУ)"},
+  {"type": "telegram", "id": "nomus_pimu", "title": "НОМУС ПИМУ"},
+  {"type": "telegram", "id": "so_pimu", "title": "ШСО «Пульс» ПИМУ"}
+]

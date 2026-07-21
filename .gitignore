@@ -1,0 +1,10 @@
+# секреты и локальные данные — НЕ коммитим
+.env
+*.db
+*.db-journal
+*.log
+*.log.*
+*.tmp
+__pycache__/
+*.pyc
+.venv/
