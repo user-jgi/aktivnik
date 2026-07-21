@@ -42,9 +42,13 @@ def init_db():
         c.executescript(_SCHEMA)
         # Миграция: поля события для дедупликации афиш
         cols = {r["name"] for r in c.execute("PRAGMA table_info(posts)")}
-        for col in ("event_title", "event_date", "event_time"):
+        # event_* заполняет ИИ; dt_* — регулярки до обращения к ИИ
+        for col in ("event_title", "event_date", "event_time", "dt_date", "dt_time"):
             if col not in cols:
                 c.execute(f"ALTER TABLE posts ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_posts_dt "
+                  "ON posts(source, dt_date, dt_time)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_posts_hash ON posts(text_hash)")
 
 
 def text_hash(text: str) -> str:
@@ -105,15 +109,16 @@ def duplicate_event(title: str, date: str) -> str | None:
 
 
 def add_post(p: dict, status: str, ai_reason: str = "",
-             event: dict | None = None) -> int:
+             event: dict | None = None, dt: dict | None = None) -> int:
     ev = event or {}
+    d = dt or {}
     with _conn() as c:
         cur = c.execute(
             """INSERT OR IGNORE INTO posts
                (source, post_id, url, date, text, html, photos, videos,
                 text_hash, status, ai_reason, created_at,
-                event_title, event_date, event_time)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                event_title, event_date, event_time, dt_date, dt_time)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 p["source"], p["post_id"], p["url"], p["date"],
                 p["text"], p["html"],
@@ -121,9 +126,46 @@ def add_post(p: dict, status: str, ai_reason: str = "",
                 text_hash(p["text"]), status, ai_reason,
                 datetime.now(timezone.utc).isoformat(),
                 ev.get("title", ""), ev.get("date", ""), ev.get("time", ""),
+                d.get("date") or "", d.get("time") or "",
             ),
         )
         return cur.lastrowid or 0
+
+
+def duplicate_datetime(source: str, dt_date: str, dt_time: str) -> str | None:
+    """Та же группа уже присылала пост на ту же дату и время.
+
+    Ловит повторы-напоминания об одном мероприятии без обращения к ИИ.
+    Срабатывает только когда известны И дата, И время — иначе слишком грубо.
+    """
+    if not dt_date or not dt_time:
+        return None
+    with _conn() as c:
+        row = c.execute(
+            """SELECT url FROM posts
+               WHERE source=? AND dt_date=? AND dt_time=?
+                 AND status IN ('published','pending_review')
+               LIMIT 1""",
+            (source, dt_date, dt_time),
+        ).fetchone()
+    return row["url"] if row else None
+
+
+def prior_decision(thash: str) -> tuple[str, str] | None:
+    """Решение по уже виденному ровно такому же тексту (кросспостинг).
+
+    Позволяет не платить за повторную модерацию идентичного текста.
+    """
+    if not thash:
+        return None
+    with _conn() as c:
+        row = c.execute(
+            """SELECT status, ai_reason FROM posts
+               WHERE text_hash=? AND status IN ('published','rejected','pending_review')
+               LIMIT 1""",
+            (thash,),
+        ).fetchone()
+    return (row["status"], row["ai_reason"]) if row else None
 
 
 def set_status(row_id: int, status: str):

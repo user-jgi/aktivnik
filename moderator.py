@@ -118,33 +118,43 @@ c докладами по отчётности, «стратегические �
 - коммерческая реклама сторонних товаров/услуг;
 - анонсы без конкретики («скоро что-то будет», «следите за новостями»).
 
+Дата и время мероприятия уже извлечены автоматически: {WHEN}
+Их определять не нужно — оцени только суть поста.
+
 Ответь СТРОГО одним JSON без пояснений:
 {{"decision": "publish" | "reject" | "unsure",
   "interest": <1-10>,
-  "reason": "краткое объяснение по-русски",
-  "event_title": "короткое название мероприятия или пустая строка",
-  "event_date": "дата в формате YYYY-MM-DD, если известна, иначе пустая строка",
-  "event_time": "время ЧЧ:ММ, если известно, иначе пустая строка"}}
+  "reason": "кратко по-русски, до 10 слов",
+  "event_title": "короткое название мероприятия или пустая строка"}}
 
 "unsure" используй, только если действительно нельзя определить. Сегодня {TODAY}."""
 
 
-def moderate(text: str) -> tuple[str, str, dict]:
+def moderate(text: str, dt: dict | None = None) -> tuple[str, str, dict]:
     """Возвращает (decision, reason, event);
-    decision ∈ publish/reject/review; event = {title, date, time}."""
-    empty_event = {"title": "", "date": "", "time": ""}
+    decision ∈ publish/reject/review; event = {title, date, time}.
+
+    dt — уже распознанные регуляркой дата/время: отдаём их модели готовыми,
+    чтобы она не тратила токены на разбор и не ошибалась в датах.
+    """
+    dt = dt or {}
+    empty_event = {"title": "", "date": dt.get("date") or "", "time": dt.get("time") or ""}
     if not text.strip():
         # Пост без текста (только медиа) — решает человек
         return "review", "пост без текста", empty_event
+
+    when = ", ".join(filter(None, [dt.get("date"), dt.get("time")])) or "не распознаны"
 
     from datetime import date as _date
     payload = {
         "model": GROQ_MODEL,
         "messages": [{
             "role": "user",
-            "content": _PROMPT.format(POST=text[:4000], TODAY=_date.today().isoformat()),
+            # анонсы короткие: 2000 символов с запасом, экономим входные токены
+            "content": _PROMPT.format(POST=text[:2000], WHEN=when,
+                                      TODAY=_date.today().isoformat()),
         }],
-        "max_tokens": 300,
+        "max_tokens": 160,
         "temperature": 0,
         "response_format": {"type": "json_object"},
     }
@@ -156,8 +166,9 @@ def moderate(text: str) -> tuple[str, str, dict]:
         reason = str(data.get("reason", ""))[:300]
         event = {
             "title": str(data.get("event_title", ""))[:200],
-            "date": str(data.get("event_date", ""))[:10],
-            "time": str(data.get("event_time", ""))[:5],
+            # дату/время берём из регулярки — они надёжнее и уже посчитаны
+            "date": dt.get("date") or "",
+            "time": dt.get("time") or "",
         }
     except (GroqError, json.JSONDecodeError, KeyError, ValueError) as e:
         log.error("Модерация не удалась: %s", e)

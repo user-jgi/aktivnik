@@ -12,8 +12,10 @@ import logging
 import sys
 import threading
 import time
+from datetime import datetime
 
 import config
+import dateparse
 import db
 import fetcher
 import moderator
@@ -45,8 +47,9 @@ def _publish_vk(post: dict):
         log.error("VK-постинг упал (%s): %s", post.get("url", ""), e)
 
 
-def send_review(post: dict, reason: str, event: dict | None = None) -> str:
-    row_id = db.add_post(post, "pending_review", reason, event)
+def send_review(post: dict, reason: str, event: dict | None = None,
+                dt: dict | None = None) -> str:
+    row_id = db.add_post(post, "pending_review", reason, event, dt)
     if row_id:
         msg_id = publisher.send_for_review(row_id, post, reason)
         if msg_id:
@@ -70,11 +73,38 @@ def process_post(post: dict) -> str:
         db.add_post(post, "rejected", "пост без текста и без картинки")
         return "rejected"
 
-    if db.duplicate_published(db.text_hash(post["text"])):
+    thash = db.text_hash(post["text"])
+    if db.duplicate_published(thash):
         db.add_post(post, "duplicate", "тот же текст уже публиковался")
         return "duplicate"
 
-    decision, reason, event = moderator.moderate(post["text"])
+    # ── предфильтр без ИИ: экономим лимиты Groq ──────────────────────────────
+    dt = dateparse.parse(post["text"], post["date"])
+
+    # 1. Нет ни даты, ни времени — это не анонс, ИИ не нужен
+    if not dt["has"]:
+        db.add_post(post, "rejected", "нет даты и времени — не анонс", dt=dt)
+        return "rejected"
+
+    # 2. Мероприятие уже прошло
+    if dt["date"] and dt["date"] < datetime.now().date().isoformat():
+        db.add_post(post, "rejected", f"дата уже прошла ({dt['date']})", dt=dt)
+        return "rejected"
+
+    # 3. Та же группа, та же дата и время — очевидный повтор
+    dup = db.duplicate_datetime(post["source"], dt["date"], dt["time"])
+    if dup:
+        db.add_post(post, "duplicate",
+                    f"та же дата и время у {post['source']}: {dup}", dt=dt)
+        return "duplicate"
+
+    # 4. Ровно такой же текст уже модерировался — переиспользуем вердикт
+    prior = db.prior_decision(thash)
+    if prior and prior[0] == "rejected":
+        db.add_post(post, "rejected", f"повтор ранее отклонённого: {prior[1]}", dt=dt)
+        return "rejected"
+
+    decision, reason, event = moderator.moderate(post["text"], dt)
 
     if decision == "review" and reason.startswith("ошибка ИИ"):
         # Groq недоступен — не записываем, попробуем в следующем цикле
@@ -85,7 +115,7 @@ def process_post(post: dict) -> str:
         dup_url = db.duplicate_event(event["title"], event["date"])
         if dup_url:
             db.add_post(post, "duplicate",
-                        f"та же афиша уже публиковалась: {dup_url}", event)
+                        f"та же афиша уже публиковалась: {dup_url}", event, dt)
             return "duplicate"
 
     if decision == "publish":
@@ -93,11 +123,11 @@ def process_post(post: dict) -> str:
         if ok:
             _publish_vk(post)
         status = "published" if ok else "skipped"
-        db.add_post(post, status, reason, event)
+        db.add_post(post, status, reason, event, dt)
         return status
 
     # Текстовые посты человеку не шлём: не уверен ИИ — значит отказ
-    db.add_post(post, "rejected", reason, event)
+    db.add_post(post, "rejected", reason, event, dt)
     return "rejected"
 
 
