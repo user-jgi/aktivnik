@@ -23,9 +23,38 @@ SOURCES_PATH = DATA_DIR / "sources.json"
 # Начальный список каналов, лежащий в репозитории (сид для первого запуска).
 SEED_SOURCES = BASE_DIR / "sources.json"
 
-# При первом запуске с пустым томом копируем сид-список в DATA_DIR
-if not SOURCES_PATH.exists() and SEED_SOURCES.exists():
-    shutil.copy(SEED_SOURCES, SOURCES_PATH)
+def _sync_sources_from_seed():
+    """Подтягивает новые источники из репозитория в список на томе.
+
+    Первый запуск (том пуст) — просто копируем сид. На последующих деплоях
+    добавляем те источники, которых ещё нет (по паре тип+id), не трогая
+    добавленные вручную через /add.
+    """
+    if not SEED_SOURCES.exists():
+        return
+    if not SOURCES_PATH.exists():
+        shutil.copy(SEED_SOURCES, SOURCES_PATH)
+        return
+    try:
+        with open(SEED_SOURCES, encoding="utf-8") as f:
+            seed = json.load(f)
+        with open(SOURCES_PATH, encoding="utf-8") as f:
+            current = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return
+    have = {(s.get("type", "telegram"), s["id"].lower()) for s in current}
+    added = [s for s in seed
+             if (s.get("type", "telegram"), s["id"].lower()) not in have]
+    if not added:
+        return
+    current.extend(added)
+    tmp = SOURCES_PATH.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(current, f, ensure_ascii=False, indent=2)
+    tmp.replace(SOURCES_PATH)
+
+
+_sync_sources_from_seed()
 
 # Окно, в котором пост считается «новым» при периодической проверке, дней.
 # Старые посты при запуске НЕ обрабатываются (только помечаются как известные),
