@@ -19,6 +19,7 @@ import fetcher
 import moderator
 import publisher
 import vk_fetcher
+import vk_publisher
 
 logging.basicConfig(
     level=logging.INFO,
@@ -29,6 +30,19 @@ logging.basicConfig(
     ],
 )
 log = logging.getLogger("main")
+
+
+def _publish_vk(post: dict):
+    """Дублирует пост в VK-сообщество, если автопостинг настроен.
+
+    Ошибка VK не должна ломать основной поток — Telegram уже опубликован.
+    """
+    if not vk_publisher.enabled():
+        return
+    try:
+        vk_publisher.publish(post)
+    except Exception as e:
+        log.error("VK-постинг упал (%s): %s", post.get("url", ""), e)
 
 
 def send_review(post: dict, reason: str, event: dict | None = None) -> str:
@@ -76,6 +90,8 @@ def process_post(post: dict) -> str:
 
     if decision == "publish":
         ok = publisher.publish(post)
+        if ok:
+            _publish_vk(post)
         status = "published" if ok else "skipped"
         db.add_post(post, status, reason, event)
         return status
@@ -308,6 +324,8 @@ def bot_loop():
                     continue
                 if action == "pub":
                     ok = publisher.publish(post)
+                    if ok:
+                        _publish_vk(post)
                     db.set_status(post["id"], "published" if ok else "skipped")
                     publisher.answer_callback(cb["id"], "Опубликовано" if ok else "Ошибка")
                     result = "✅ Опубликовано" if ok else "⚠️ Не удалось опубликовать"

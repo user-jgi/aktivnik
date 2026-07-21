@@ -73,6 +73,12 @@ TELEGRAM_PROXY = os.getenv("TELEGRAM_PROXY", "")
 # Нужен для чтения открытых групп через wall.get.
 VK_SERVICE_TOKEN = os.getenv("VK_SERVICE_TOKEN", "")
 
+# Автопостинг в своё VK-сообщество (vk.com/aktivnik_nn).
+# VK_POST_TOKEN — ключ доступа сообщества с правом «Стена»
+# (Управление → Работа с API → Создать ключ). Пусто = постинг в VK выключен.
+VK_POST_TOKEN = os.getenv("VK_POST_TOKEN", "")
+VK_GROUP_ID   = os.getenv("VK_GROUP_ID", "240406559")
+
 # Groq: до 5 ключей, ротация при 429 (как в hrbot3)
 def _collect_groq_keys() -> list:
     raw = [os.getenv("GROQ_API_KEY", "")] + [
