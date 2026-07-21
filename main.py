@@ -344,6 +344,8 @@ def main():
     sources = config.load_sources()
     log.info("Старт. Источников: %d", len(sources))
 
+    log.info(vk_publisher.selfcheck())
+
     publisher.set_my_commands()
     threading.Thread(target=bot_loop, daemon=True).start()
 

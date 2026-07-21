@@ -38,6 +38,28 @@ def _api(method: str, **params) -> dict:
     return data["response"]
 
 
+def selfcheck() -> str:
+    """Проверяет ключ сообщества при старте: валиден ли и есть ли право «Стена».
+
+    Ничего не публикует — только читает права токена.
+    """
+    if not enabled():
+        return "VK-постинг выключен (нет VK_POST_TOKEN)"
+    try:
+        perms = _api("groups.getTokenPermissions")
+        names = [s.get("name") for s in perms.get("settings", [])]
+        group = _api("groups.getById", group_id=VK_GROUP_ID)
+        # v5.199 возвращает {'groups': [...]}
+        items = group.get("groups", group) if isinstance(group, dict) else group
+        title = items[0].get("name", "?") if items else "?"
+        if "wall" in names:
+            return f"VK-постинг готов: «{title}», права: {', '.join(names)}"
+        return (f"VK-постинг НЕ будет работать: у ключа нет права «Стена». "
+                f"Есть: {', '.join(names) or 'нет прав'}")
+    except (VKPostError, requests.RequestException, KeyError, IndexError) as e:
+        return f"VK-постинг: ключ не прошёл проверку — {e}"
+
+
 def _download(url: str) -> bytes | None:
     try:
         r = requests.get(url, timeout=60)
