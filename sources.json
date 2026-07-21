@@ -16,5 +16,8 @@
   {"type": "telegram", "id": "partytimehse", "title": "PartyTime HSE (ВШЭ НН)"},
   {"type": "telegram", "id": "collaboratorium", "title": "Коллаб (ВШЭ НН)"},
   {"type": "telegram", "id": "hseevent", "title": "HSE EVENT (ВШЭ НН)"},
-  {"type": "telegram", "id": "ssfzf", "title": "Студсовет ФзФ"}
+  {"type": "telegram", "id": "ssfzf", "title": "Студсовет ФзФ"},
+  {"type": "vk", "id": "profburo_irit", "title": "Профбюро ИРИТ НГТУ (VK)"},
+  {"type": "vk", "id": "profkomngtu", "title": "Профком студентов НГТУ (VK)"},
+  {"type": "vk", "id": "unn_oso", "title": "ОСО ННГУ (VK)"}
 ]

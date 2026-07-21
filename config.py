@@ -40,6 +40,10 @@ PUBLISH_DELAY_SECONDS = 4
 
 TELEGRAM_PROXY = os.getenv("TELEGRAM_PROXY", "")
 
+# Сервисный ключ VK (dev.vk.com → приложение → «Сервисный ключ доступа»).
+# Нужен для чтения открытых групп через wall.get.
+VK_SERVICE_TOKEN = os.getenv("VK_SERVICE_TOKEN", "")
+
 # Groq: до 5 ключей, ротация при 429 (как в hrbot3)
 def _collect_groq_keys() -> list:
     raw = [os.getenv("GROQ_API_KEY", "")] + [

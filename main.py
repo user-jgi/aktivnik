@@ -18,6 +18,7 @@ import db
 import fetcher
 import moderator
 import publisher
+import vk_fetcher
 
 logging.basicConfig(
     level=logging.INFO,
@@ -84,16 +85,23 @@ def process_post(post: dict) -> str:
     return "rejected"
 
 
+def _fetch_source(src: dict) -> list[dict]:
+    """Читает посты источника нужным парсером (telegram / vk)."""
+    if src.get("type") == "vk":
+        return vk_fetcher.fetch_since(src["id"], config.FRESH_WINDOW_DAYS)
+    return fetcher.fetch_since(src["id"], config.FRESH_WINDOW_DAYS)
+
+
 def baseline_source(src: dict) -> int:
     """Помечает текущие посты источника как известные БЕЗ модерации.
 
     Так при запуске/добавлении источника старьё не публикуется и лимиты
     Groq не тратятся. Возвращает число добавленных в базу постов."""
-    if src.get("type") != "telegram":
+    if src.get("type") not in ("telegram", "vk"):
         return 0
     n = 0
     try:
-        for p in fetcher.fetch_since(src["id"], config.FRESH_WINDOW_DAYS):
+        for p in _fetch_source(src):
             if not db.seen(p["source"], p["post_id"]):
                 db.add_post(p, "baseline", "старый пост, помечен при запуске")
                 n += 1
@@ -105,10 +113,10 @@ def baseline_source(src: dict) -> int:
 def run_source(src: dict) -> dict:
     """Обрабатывает новые посты источника (окно FRESH_WINDOW_DAYS)."""
     counts: dict[str, int] = {}
-    if src.get("type") != "telegram":
+    if src.get("type") not in ("telegram", "vk"):
         return counts
     try:
-        posts = fetcher.fetch_since(src["id"], config.FRESH_WINDOW_DAYS)
+        posts = _fetch_source(src)
     except Exception as e:
         log.error("Источник %s: ошибка чтения: %s", src["id"], e)
         return counts
@@ -139,14 +147,34 @@ def fmt_counts(c: dict) -> str:
 HELP = (
     "Команды:\n"
     "/menu — главное меню с кнопками\n"
-    "/add username — добавить TG-канал (публичный, по username без @)\n"
-    "/del username — убрать канал из списка\n"
+    "/add username — добавить TG-канал (или ссылку vk.com/... / t.me/...)\n"
+    "/del username — убрать источник из списка\n"
     "/list — список источников\n"
     "/stats — статистика по постам\n"
     "/review — прислать посты, ждущие решения\n"
     "/help — эта справка\n\n"
     "Афиши-картинки без текста приходят сюда с кнопками ✅/❌."
 )
+
+
+def src_link(src: dict) -> str:
+    """Ссылка на источник по его типу."""
+    if src.get("type") == "vk":
+        return f"vk.com/{src['id']}"
+    return f"t.me/{src['id']}"
+
+
+def _parse_add_arg(arg: str) -> tuple[str, str]:
+    """Из аргумента /add достаёт (type, id). Понимает ссылки vk.com/... и t.me/..."""
+    a = arg.strip().rstrip("/")
+    low = a.lower()
+    if "vk.com/" in low:
+        return "vk", a.split("/")[-1]
+    if "t.me/" in low or "telegram.me/" in low:
+        return "telegram", a.split("/")[-1].lstrip("@")
+    if low.startswith("vk:"):
+        return "vk", a[3:]
+    return "telegram", a.lstrip("@")
 
 
 def resend_pending() -> str:
@@ -183,7 +211,7 @@ def handle_command(text: str) -> str | None:
         if not sources:
             return "Список источников пуст."
         lines = [
-            f"{i+1}. t.me/{s['id']} — {s.get('title', '')}".strip(" —")
+            f"{i+1}. {src_link(s)} — {s.get('title', '')}".strip(" —")
             for i, s in enumerate(sources)
         ]
         return "Источники:\n" + "\n".join(lines)
@@ -191,39 +219,59 @@ def handle_command(text: str) -> str | None:
     if cmd == "stats":
         lines = ["Статистика (всего):", fmt_counts(db.stats()), ""]
         for source, s in sorted(db.stats_by_source().items()):
-            lines.append(f"t.me/{source}:")
+            if source.startswith("vk:"):
+                label = "vk.com/" + source[3:]
+            else:
+                label = "t.me/" + source
+            lines.append(f"{label}:")
             lines.append("  " + fmt_counts(s))
         return "\n".join(lines)
 
     if cmd == "add":
         if not arg:
-            return "Формат: /add username"
+            return "Формат: /add username  (или ссылка vk.com/... / t.me/...)"
+        stype, sid = _parse_add_arg(arg)
+        if stype == "vk" and not config.VK_SERVICE_TOKEN:
+            return ("Чтобы добавлять VK-группы, задай VK_SERVICE_TOKEN "
+                    "(сервисный ключ приложения с dev.vk.com).")
         sources = config.load_sources()
-        if any(s["id"].lower() == arg.lower() for s in sources):
-            return f"t.me/{arg} уже в списке."
+        if any(s["id"].lower() == sid.lower() and s.get("type", "telegram") == stype
+               for s in sources):
+            return f"{src_link({'type': stype, 'id': sid})} уже в списке."
+        src = {"type": stype, "id": sid, "title": ""}
+        # Проверяем доступность источника перед добавлением
         try:
-            page = fetcher.fetch_page(arg)
+            if stype == "vk":
+                probe = vk_fetcher.fetch_since(sid, 30)
+            else:
+                probe = fetcher.fetch_page(sid)
         except Exception as e:
-            return f"Не удалось прочитать t.me/s/{arg}: {e}"
-        if not page:
-            return (f"У t.me/{arg} нет публичного веб-превью — "
+            return f"Не удалось прочитать {src_link(src)}: {e}"
+        if stype == "telegram" and not probe:
+            return (f"У t.me/{sid} нет публичного веб-превью — "
                     f"канал закрытый или не существует. Добавить нельзя.")
-        src = {"type": "telegram", "id": arg, "title": ""}
         sources.append(src)
         config.save_sources(sources)
         n = baseline_source(src)
-        return (f"✅ Добавил t.me/{arg}. Старые посты ({n}) публиковаться не будут, "
-                f"слежу за новыми.")
+        return (f"✅ Добавил {src_link(src)}. Старые посты ({n}) публиковаться "
+                f"не будут, слежу за новыми.")
 
     if cmd == "del":
         if not arg:
-            return "Формат: /del username"
+            return "Формат: /del username  (для VK: vk.com/... или vk:name)"
+        dtype, sid = _parse_add_arg(arg)
+        # Если явно указан vk — удаляем только vk-источник; иначе по id
+        has_vk = "vk.com/" in arg.lower() or arg.lower().startswith("vk:")
         sources = config.load_sources()
-        new = [s for s in sources if s["id"].lower() != arg.lower()]
+        if has_vk:
+            new = [s for s in sources
+                   if not (s["id"].lower() == sid.lower() and s.get("type") == "vk")]
+        else:
+            new = [s for s in sources if s["id"].lower() != sid.lower()]
         if len(new) == len(sources):
-            return f"t.me/{arg} нет в списке."
+            return f"{sid} нет в списке."
         config.save_sources(new)
-        return f"🗑 Убрал t.me/{arg}. Осталось источников: {len(new)}."
+        return f"🗑 Убрал {sid}. Осталось источников: {len(new)}."
 
     return "Не понял. /help — список команд."
 
