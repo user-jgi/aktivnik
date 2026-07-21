@@ -12,5 +12,9 @@
   {"type": "telegram", "id": "stud_sovet_lunn", "title": "Студсовет НГЛУ"},
   {"type": "telegram", "id": "lunn_family", "title": "LUNN FAMILY (НГЛУ)"},
   {"type": "telegram", "id": "nomus_pimu", "title": "НОМУС ПИМУ"},
-  {"type": "telegram", "id": "so_pimu", "title": "ШСО «Пульс» ПИМУ"}
+  {"type": "telegram", "id": "so_pimu", "title": "ШСО «Пульс» ПИМУ"},
+  {"type": "telegram", "id": "partytimehse", "title": "PartyTime HSE (ВШЭ НН)"},
+  {"type": "telegram", "id": "collaboratorium", "title": "Коллаб (ВШЭ НН)"},
+  {"type": "telegram", "id": "hseevent", "title": "HSE EVENT (ВШЭ НН)"},
+  {"type": "telegram", "id": "ssfzf", "title": "Студсовет ФзФ"}
 ]
