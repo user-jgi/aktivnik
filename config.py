@@ -64,6 +64,9 @@ FRESH_WINDOW_DAYS = int(os.getenv("FRESH_WINDOW_DAYS", "2"))
 # Периодическая проверка новых постов, секунд
 CHECK_INTERVAL_SECONDS = int(os.getenv("CHECK_INTERVAL_SECONDS", "900"))
 
+# Сколько дней повторять посты, отложенные из-за недоступности Groq
+DEFERRED_MAX_DAYS = int(os.getenv("DEFERRED_MAX_DAYS", "7"))
+
 # Пауза между публикациями в канал (лимит Telegram ~20 сообщений/мин на канал)
 PUBLISH_DELAY_SECONDS = 4
 

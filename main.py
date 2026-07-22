@@ -57,8 +57,12 @@ def send_review(post: dict, reason: str, event: dict | None = None,
     return "pending_review"
 
 
-def process_post(post: dict) -> str:
-    """Полный цикл одного поста. Возвращает итоговый статус."""
+def process_post(post: dict, allow_past: bool = False) -> str:
+    """Полный цикл одного поста. Возвращает итоговый статус.
+
+    allow_past=True используется при backfill: наполняем пустой канал, поэтому
+    анонсы уже прошедших мероприятий тоже берём.
+    """
     if db.seen(post["source"], post["post_id"]):
         return "known"
 
@@ -87,7 +91,8 @@ def process_post(post: dict) -> str:
         return "rejected"
 
     # 2. Мероприятие уже прошло
-    if dt["date"] and dt["date"] < datetime.now().date().isoformat():
+    if (not allow_past and dt["date"]
+            and dt["date"] < datetime.now().date().isoformat()):
         db.add_post(post, "rejected", f"дата уже прошла ({dt['date']})", dt=dt)
         return "rejected"
 
@@ -107,8 +112,10 @@ def process_post(post: dict) -> str:
     decision, reason, event = moderator.moderate(post["text"], dt)
 
     if decision == "review" and reason.startswith("ошибка ИИ"):
-        # Groq недоступен — не записываем, попробуем в следующем цикле
-        return "error"
+        # Groq недоступен: откладываем пост в базу, чтобы не потерять его,
+        # когда он выпадет из окна свежести. Повторим в следующих циклах.
+        db.add_post(post, "deferred", reason, dt=dt)
+        return "deferred"
 
     # Дедуп афиш: то же мероприятие (название+дата) уже публиковалось
     if decision == "publish" and event.get("title"):
@@ -131,11 +138,91 @@ def process_post(post: dict) -> str:
     return "rejected"
 
 
-def _fetch_source(src: dict) -> list[dict]:
+def backfill(days: int, limit: int) -> dict:
+    """Разовое наполнение каналов постами за последние `days` дней.
+
+    Снимает пометку baseline со старых постов и прогоняет их через обычный
+    конвейер, включая уже прошедшие мероприятия. Останавливается, опубликовав
+    `limit` постов, чтобы не залить каналы разом и не упереться в лимиты.
+    """
+    counts: dict[str, int] = {}
+    published = 0
+
+    for src in config.load_sources():
+        if published >= limit:
+            break
+        try:
+            posts = _fetch_source(src, days)
+        except Exception as e:
+            log.error("Backfill %s: ошибка чтения: %s", src["id"], e)
+            continue
+
+        for p in posts:
+            if published >= limit:
+                break
+            db.drop_baseline(p["source"], p["post_id"])
+            try:
+                st = process_post(p, allow_past=True)
+            except Exception as e:
+                log.error("Backfill %s: %s", p["url"], e)
+                st = "error"
+            counts[st] = counts.get(st, 0) + 1
+            if st == "published":
+                published += 1
+                log.info("Backfill: опубликовано %d/%d — %s",
+                         published, limit, p["url"])
+
+    return counts
+
+
+def retry_deferred() -> dict:
+    """Домодерирует посты, отложенные из-за недоступности Groq.
+
+    Работает независимо от окна свежести источников, поэтому пост не теряется,
+    даже если лимиты ИИ восстановились через сутки-двое.
+    """
+    counts: dict[str, int] = {}
+    gone = db.expire_deferred(config.DEFERRED_MAX_DAYS)
+    if gone:
+        counts["expired"] = gone
+        log.warning("Отложенных постов протухло: %d", gone)
+
+    for post in db.list_deferred(config.DEFERRED_MAX_DAYS):
+        dt = {"date": post["dt_date"] or None, "time": post["dt_time"] or None}
+        decision, reason, event = moderator.moderate(post["text"], dt)
+
+        if decision == "review" and reason.startswith("ошибка ИИ"):
+            # ИИ всё ещё недоступен — прекращаем проход, попробуем позже
+            log.info("Groq недоступен, отложенные ждут дальше")
+            break
+
+        if decision == "publish" and event.get("title"):
+            dup = db.duplicate_event(event["title"], event["date"])
+            if dup:
+                db.finalize_deferred(post["id"], "duplicate",
+                                     f"та же афиша уже публиковалась: {dup}", event)
+                counts["duplicate"] = counts.get("duplicate", 0) + 1
+                continue
+
+        if decision == "publish":
+            ok = publisher.publish(post)
+            if ok:
+                _publish_vk(post)
+            status = "published" if ok else "skipped"
+        else:
+            status = "rejected"
+        db.finalize_deferred(post["id"], status, reason, event)
+        counts[status] = counts.get(status, 0) + 1
+
+    return counts
+
+
+def _fetch_source(src: dict, days: int | None = None) -> list[dict]:
     """Читает посты источника нужным парсером (telegram / vk)."""
+    days = config.FRESH_WINDOW_DAYS if days is None else days
     if src.get("type") == "vk":
-        return vk_fetcher.fetch_since(src["id"], config.FRESH_WINDOW_DAYS)
-    return fetcher.fetch_since(src["id"], config.FRESH_WINDOW_DAYS)
+        return vk_fetcher.fetch_since(src["id"], days)
+    return fetcher.fetch_since(src["id"], days)
 
 
 def baseline_source(src: dict) -> int:
@@ -190,9 +277,12 @@ def fmt_counts(c: dict) -> str:
 
 # ── Админка и кнопки ревью ────────────────────────────────────────────────────
 
+_backfill_lock = threading.Lock()
+
 HELP = (
     "Команды:\n"
     "/menu — главное меню с кнопками\n"
+    "/backfill [дней] [сколько] — разово наполнить каналы старыми постами\n"
     "/add username — добавить TG-канал (или ссылку vk.com/... / t.me/...)\n"
     "/del username — убрать источник из списка\n"
     "/list — список источников\n"
@@ -251,6 +341,27 @@ def handle_command(text: str) -> str | None:
 
     if cmd == "review":
         return resend_pending()
+
+    if cmd == "backfill":
+        days = int(arg) if arg.isdigit() else 7
+        limit = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 15
+        if _backfill_lock.locked():
+            return "Backfill уже идёт, дождись отчёта."
+
+        def _run():
+            with _backfill_lock:
+                publisher.notify_owner(
+                    f"⏳ Backfill: беру посты за {days} дн., опубликую до {limit} шт. "
+                    f"Это займёт несколько минут.")
+                try:
+                    c = backfill(days, limit)
+                    publisher.notify_owner(f"✅ Backfill завершён.\n{fmt_counts(c)}")
+                except Exception as e:
+                    log.exception("Backfill упал")
+                    publisher.notify_owner(f"❌ Backfill упал: {e}")
+
+        threading.Thread(target=_run, daemon=True).start()
+        return None
 
     if cmd == "list":
         sources = config.load_sources()
@@ -393,6 +504,11 @@ def main():
         stale = db.reject_stale_reviews(3)
         if stale:
             log.info("Авто-отклонено просроченных ревью: %d", stale)
+
+        # Сначала добираем отложенное — оно старше свежих постов
+        rd = retry_deferred()
+        if rd:
+            log.info("Отложенные посты: %s", fmt_counts(rd))
         for src in config.load_sources():
             c = run_source(src)
             if any(k not in ("known",) for k in c):

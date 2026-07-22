@@ -151,6 +151,59 @@ def duplicate_datetime(source: str, dt_date: str, dt_time: str) -> str | None:
     return row["url"] if row else None
 
 
+def drop_baseline(source: str, post_id: int) -> bool:
+    """Снимает пометку «старый пост» — чтобы обработать его при backfill."""
+    with _conn() as c:
+        cur = c.execute(
+            "DELETE FROM posts WHERE source=? AND post_id=? AND status='baseline'",
+            (source, post_id),
+        )
+        return cur.rowcount > 0
+
+
+def _row_to_post(row) -> dict:
+    d = dict(row)
+    d["photos"] = json.loads(d["photos"])
+    d["videos"] = json.loads(d["videos"])
+    return d
+
+
+def list_deferred(max_age_days: int) -> list[dict]:
+    """Посты, отложенные из-за недоступности Groq, ещё не протухшие."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT * FROM posts WHERE status='deferred' AND created_at >= ? "
+            "ORDER BY date",
+            (cutoff,),
+        ).fetchall()
+    return [_row_to_post(r) for r in rows]
+
+
+def expire_deferred(max_age_days: int) -> int:
+    """Слишком старые отложенные посты снимаем с повторов."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
+    with _conn() as c:
+        cur = c.execute(
+            "UPDATE posts SET status='expired', "
+            "ai_reason='протух: Groq был недоступен дольше ' || ? || ' дн.' "
+            "WHERE status='deferred' AND created_at < ?",
+            (max_age_days, cutoff),
+        )
+        return cur.rowcount
+
+
+def finalize_deferred(row_id: int, status: str, reason: str,
+                      event: dict | None = None):
+    """Записывает итоговое решение по ранее отложенному посту."""
+    ev = event or {}
+    with _conn() as c:
+        c.execute(
+            "UPDATE posts SET status=?, ai_reason=?, event_title=? WHERE id=?",
+            (status, reason, ev.get("title", ""), row_id),
+        )
+
+
 def prior_decision(thash: str) -> tuple[str, str] | None:
     """Решение по уже виденному ровно такому же тексту (кросспостинг).
 
