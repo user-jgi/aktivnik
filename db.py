@@ -151,11 +151,19 @@ def duplicate_datetime(source: str, dt_date: str, dt_time: str) -> str | None:
     return row["url"] if row else None
 
 
-def drop_baseline(source: str, post_id: int) -> bool:
-    """Снимает пометку «старый пост» — чтобы обработать его при backfill."""
+def drop_for_backfill(source: str, post_id: int) -> bool:
+    """Освобождает пост для повторной обработки при backfill.
+
+    Убираем не только пометку baseline, но и отказы с причиной «дата уже прошла»:
+    при наполнении канала прошедшие мероприятия как раз нужны. Отказы по сути
+    (скучно, не анонс) не трогаем — они остаются в силе.
+    """
     with _conn() as c:
         cur = c.execute(
-            "DELETE FROM posts WHERE source=? AND post_id=? AND status='baseline'",
+            """DELETE FROM posts
+               WHERE source=? AND post_id=?
+                 AND (status='baseline'
+                      OR (status='rejected' AND ai_reason LIKE 'дата уже прошла%'))""",
             (source, post_id),
         )
         return cur.rowcount > 0

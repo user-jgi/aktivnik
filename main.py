@@ -160,7 +160,7 @@ def backfill(days: int, limit: int) -> dict:
         for p in posts:
             if published >= limit:
                 break
-            db.drop_baseline(p["source"], p["post_id"])
+            db.drop_for_backfill(p["source"], p["post_id"])
             try:
                 st = process_post(p, allow_past=True)
             except Exception as e:
