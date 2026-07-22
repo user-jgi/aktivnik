@@ -158,12 +158,17 @@ def moderate(text: str, dt: dict | None = None) -> tuple[str, str, dict]:
         "temperature": 0,
         "response_format": {"type": "json_object"},
     }
+    snippet = " ".join(text.split())[:70]
     try:
+        t0 = time.monotonic()
         raw = _groq_chat(payload)
+        took = time.monotonic() - t0
         data = json.loads(raw)
         decision = data.get("decision", "unsure")
         interest = int(data.get("interest", 0) or 0)
         reason = str(data.get("reason", ""))[:300]
+        log.info("Groq [%s] interest=%s за %.1fс | %s | %s",
+                 decision, interest, took, reason[:60], snippet)
         event = {
             "title": str(data.get("event_title", ""))[:200],
             # дату/время берём из регулярки — они надёжнее и уже посчитаны
@@ -171,7 +176,8 @@ def moderate(text: str, dt: dict | None = None) -> tuple[str, str, dict]:
             "time": dt.get("time") or "",
         }
     except (GroqError, json.JSONDecodeError, KeyError, ValueError) as e:
-        log.error("Модерация не удалась: %s", e)
+        log.error("Groq НЕ ОТВЕТИЛ (%s): %s | пост: %s",
+                  type(e).__name__, e, snippet)
         return "review", f"ошибка ИИ: {e}", empty_event
 
     if decision == "publish" and interest >= 6:

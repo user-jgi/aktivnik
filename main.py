@@ -84,21 +84,26 @@ def process_post(post: dict, allow_past: bool = False) -> str:
 
     # ── предфильтр без ИИ: экономим лимиты Groq ──────────────────────────────
     dt = dateparse.parse(post["text"], post["date"])
+    snip = " ".join(post["text"].split())[:60]
 
     # 1. Нет ни даты, ни времени — это не анонс, ИИ не нужен
     if not dt["has"]:
+        log.info("ФИЛЬТР нет даты/времени | %s | %s", post["url"], snip)
         db.add_post(post, "rejected", "нет даты и времени — не анонс", dt=dt)
         return "rejected"
 
     # 2. Мероприятие уже прошло
     if (not allow_past and dt["date"]
             and dt["date"] < datetime.now().date().isoformat()):
+        log.info("ФИЛЬТР дата прошла (%s) | %s", dt["date"], post["url"])
         db.add_post(post, "rejected", f"дата уже прошла ({dt['date']})", dt=dt)
         return "rejected"
 
     # 3. Та же группа, та же дата и время — очевидный повтор
     dup = db.duplicate_datetime(post["source"], dt["date"], dt["time"])
     if dup:
+        log.info("ФИЛЬТР дубль даты+времени (%s %s) | %s",
+                 dt["date"], dt["time"], post["url"])
         db.add_post(post, "duplicate",
                     f"та же дата и время у {post['source']}: {dup}", dt=dt)
         return "duplicate"
@@ -106,8 +111,12 @@ def process_post(post: dict, allow_past: bool = False) -> str:
     # 4. Ровно такой же текст уже модерировался — переиспользуем вердикт
     prior = db.prior_decision(thash)
     if prior and prior[0] == "rejected":
+        log.info("ФИЛЬТР повтор отклонённого текста | %s", post["url"])
         db.add_post(post, "rejected", f"повтор ранее отклонённого: {prior[1]}", dt=dt)
         return "rejected"
+
+    log.info("→ В GROQ (дата=%s время=%s) | %s | %s",
+             dt["date"], dt["time"], post["url"], snip)
 
     decision, reason, event = moderator.moderate(post["text"], dt)
 
@@ -156,6 +165,8 @@ def backfill(days: int, limit: int) -> dict:
         except Exception as e:
             log.error("Backfill %s: ошибка чтения: %s", src["id"], e)
             continue
+        log.info("Backfill %s: взято %d постов за %d дн.",
+                 src["id"], len(posts), days)
 
         for p in posts:
             if published >= limit:
