@@ -8,7 +8,7 @@ import time
 
 import requests
 
-from config import GROQ_API_KEYS, TELEGRAM_PROXY
+from config import GROQ_API_KEYS, MIN_INTEREST, TELEGRAM_PROXY
 
 log = logging.getLogger(__name__)
 
@@ -103,7 +103,7 @@ _PROMPT = """Ты строгий редактор телеграм-канала 
 2. Мероприятие открыто для обычных студентов (можно прийти или зарегистрироваться), \
 а не только для узкой группы (актива, одной кафедры, участников программы).
 3. На это мероприятие среднему студенту реально может захотеться пойти в свободное \
-время. Оценка интересности interest от 1 до 10 — публикуем только 6 и выше.
+время. Оценка интересности interest от 1 до 10 — публикуем от {MIN_INT} и выше.
 
 ОТКЛОНЯТЬ безжалостно:
 - итоги/отчёты/фотоотчёты о прошедшем, поздравления, мемы;
@@ -151,7 +151,7 @@ def moderate(text: str, dt: dict | None = None) -> tuple[str, str, dict]:
         "messages": [{
             "role": "user",
             # анонсы короткие: 2000 символов с запасом, экономим входные токены
-            "content": _PROMPT.format(POST=text[:2000], WHEN=when,
+            "content": _PROMPT.format(POST=text[:2000], WHEN=when, MIN_INT=MIN_INTEREST,
                                       TODAY=_date.today().isoformat()),
         }],
         "max_tokens": 160,
@@ -180,7 +180,7 @@ def moderate(text: str, dt: dict | None = None) -> tuple[str, str, dict]:
                   type(e).__name__, e, snippet)
         return "review", f"ошибка ИИ: {e}", empty_event
 
-    if decision == "publish" and interest >= 6:
+    if decision == "publish" and interest >= MIN_INTEREST:
         return "publish", f"[{interest}/10] {reason}", event
     if decision == "publish":
         return "reject", f"[{interest}/10, ниже планки] {reason}", event

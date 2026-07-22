@@ -95,6 +95,12 @@ def publish(post: dict) -> bool:
         return False
 
     text = post.get("text", "").strip()
+    # Ссылка на оригинал: часть ссылок (регистрация в кнопках) не переносится
+    src = post.get("source", "")
+    label = "vk.com/" + src[3:] if src.startswith("vk:") else "t.me/" + src
+    if post.get("url"):
+        text = f"{text}\n\n🔗 Источник: {post['url']} ({label})".strip()
+
     attachments = []
     for url in post.get("photos", [])[:_MAX_PHOTOS]:
         data = _download(url)

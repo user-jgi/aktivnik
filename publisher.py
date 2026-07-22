@@ -64,6 +64,24 @@ def _send_text(chat_id, html: str, **kw):
     )
 
 
+def source_label(post: dict) -> str:
+    """Читаемое имя источника: t.me/name или vk.com/name."""
+    src = post.get("source", "")
+    return "vk.com/" + src[3:] if src.startswith("vk:") else "t.me/" + src
+
+
+def _footer(post: dict) -> str:
+    """Ссылка на оригинал в конце поста.
+
+    Нужна, потому что часть ссылок (регистрация в inline-кнопках) при репосте
+    не переносится — из оригинала их всегда можно достать.
+    """
+    url = post.get("url", "")
+    if not url:
+        return ""
+    return f'\n\n🔗 <a href="{url}">Источник: {source_label(post)}</a>'
+
+
 def publish(post: dict) -> bool:
     """Тупой репост: текст (с сохранением ссылок) + медиа ОДНИМ сообщением.
 
@@ -73,7 +91,7 @@ def publish(post: dict) -> bool:
     Медиа скачиваются с CDN и загружаются файлами: прямые ссылки на
     cdn-telegram.org бот-API отклоняет (WEBPAGE_CURL_FAILED).
     """
-    html = post["html"] or post["text"]
+    html = (post["html"] or post["text"]) + _footer(post)
     photos = post["photos"][:10]
     videos = post["videos"][:3]
     caption_ok = html and len(html) <= 1024
